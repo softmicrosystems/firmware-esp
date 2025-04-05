@@ -16,6 +16,9 @@ String  FechaVersion = "04/04/25";
 #include <WiFiClient.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <WiFiClientSecure.h>
+//#include <Update.h>
+
 #include <ArduinoJson.h>
 #include <Ticker.h>
 #include <AsyncMqttClient.h>
@@ -23,7 +26,6 @@ String  FechaVersion = "04/04/25";
 HTTPClient http;
 #include <ESP8266WiFi.h>
 #include <TimeLib.h>
-//#include <PubSubClient.h>
 #include <ESP8266httpUpdate.h> // Para manejar la OTA
 
 //_____________________________________________
@@ -147,6 +149,7 @@ String TextoNovedad = Descripcion;
 int count;
 int n = 0;
 
+boolean  EnProcesoOTA;
 String FechaResultado;
 String HoraResultado;
 String temporal;
@@ -196,10 +199,10 @@ byte EsPorPedidoUsua;
 String formattedTime;
 //String HoraMin;
 //Week Days
-String weekDays[7]={"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+String weekDays[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 //Month names
-String months[12]={"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+String months[12] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
 
 //______________________________
 String ValTelUs1, ValTelUs2, ValTelUs3, ValTelUs4;
@@ -591,6 +594,7 @@ void setup() {
     Serial.println(String(YaInicializoEEprom));
     Serial.println("****************");
   }
+  EnProcesoOTA = false;
   digitalWrite(LED_AZUL, HIGH);  //ON LED VERDE
   EsInicioReset = 1;
 
@@ -631,28 +635,6 @@ void setup() {
       }
     }
   }
-
-  //MQTTClient.setServer(mqttServer, mqttPort);
-  //MQTTClient.setCallback(ArrivedMqtt);
-  //while (!MQTTClient.connected()) {
-  //  if (MQTTClient.connect("ESP8266Client", mqttUser, mqttPass)) {
-  //    Serial.println("SE HA CONECTADO EL MQTT");
-  //    MQTTClient.subscribe("PROGMODULO");
-  //    //Serial.println("Acaba de subscribirse a PROGRMODULO!");
-  //    // Serial.println("Acaba de REGISTRAR AL MODULO DEL EQUIPO: " + String(NumSerialESP) );
-  //    MQTTClient.subscribe(String(NumSerialESP).c_str());
-  //    String BasicoOta = "WiAction/ota/send/" + String(NumSerialESP);
-  //    MQTTClient.subscribe(BasicoOta.c_str());
-  //    HayMQTT = 1;
-  //    //subscrtibe
-  //  } else {
-  //    HayMQTT = 0;
-  //    Serial.print("failed with state ");
-  //    Serial.print(MQTTClient.state());
-  //
-  //      return;
-  //    }
-  // }
   DebeGenPicoON = 1;
   DelPicoOn = TimPicoOn;
   digitalWrite(LED_AZUL, LOW);
@@ -1572,7 +1554,7 @@ void AnalizaStringRecibido() {
         // return;
       }
 
-      pos = variable.indexOf("http://");
+      pos = variable.indexOf("https://");
       if (pos >= 0) {
         Serial.println("VA A PROCESAR EL PEDIDO GRABACION DE OTA");
         variable.replace("** DONATIONWARE **", "");
@@ -1592,7 +1574,12 @@ void AnalizaStringRecibido() {
           Serial.println(url);
           Serial.println(url.length());
           Serial.println("===&&&%%%");
+          //caca  5/4/25
           actualizarFirmware(url); // 🔹 Envía la URL a la función de OTA
+
+          //actualizarFirmwareSegura(url);
+          //actualizarFirmwareSegura("https://raw.githubusercontent.com/softmicrosystems/firmware-esp/main/WiAction.ino.generic.bin");
+
         } else {
           Serial.println("NO ENCONTRO PALABRA");
         }
@@ -3144,7 +3131,7 @@ void ArrivedMqtt(char* topic, char* payload, AsyncMqttClientMessageProperties pr
     Serial.println("HAY COMANDO DESDE ACTUALIZADOR de solicitar datos");
   }
 
-  ValorBuscado = "http://";
+  ValorBuscado = "https://";
   pos = DatoRecibido.indexOf(ValorBuscado);
   if (pos >= 0) {
     EsActualizadorOta = 1;
@@ -3282,6 +3269,7 @@ void EnviaNotificacionPush(String pTopic) {
   //-----------------------------------------------------------------
   WiFiClientSecure client2;
   client2.setInsecure();
+
   if (client2.connect(host.c_str(), 443)) {  // Puerto 443 para HTTPS
     client2.println("POST " + url + " HTTP/1.1");
     client2.println("Host: " + (String)host);
@@ -3307,84 +3295,6 @@ void EnviaNotificacionPush(String pTopic) {
   //sendDataIOSFirebase();
 }
 
-//________________________
-//interesdante parta generar notificaciones push?
-//  {
-//  "to": "myToken",
-//  "notification": {
-//      "body": "test",
-//      "title": "test",
-//      "sound": "default"
-//      },
-//   "priority": "high"
-// }
-
-//https://arduino-esp8266.readthedocs.io/en/latest/esp8266wifi/station-class.html#config
-
-//==========================
-void actualizarFirmware(String url) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ No hay conexión WiFi. OTA cancelada.");
-    return;
-  }
-
-  delay(1000); // Espera 10 segundos para asegurar la conexión WiFi
-  Serial.println("📥 Iniciando OTA desde: " + url);
-
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, url);
-
-  int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK) {
-    int contentLength = http.getSize();
-    Serial.printf("Tama//o del firmware: %d bytes\n", contentLength);
-
-    WiFiClient* stream = http.getStreamPtr();
-    if (stream) {
-      Serial.println("✅ Stream de descarga iniciado.");
-    } else {
-      Serial.println("❌ Error al obtener el stream de descarga.");
-      http.end();
-      return;
-    }
-
-    if (Update.begin(contentLength)) {
-      Serial.println("✅ Iniciando actualización...");
-      size_t written = Update.writeStream(*stream);
-      if (written == contentLength) {
-        Serial.println("✅ Descarga completada. Aplicando actualización...");
-        if (Update.end()) {
-          Serial.println("✅ OTA completada con éxito. Reiniciando...");
-
-          ArmaVersionFechaOTA();      //19/3/25
-
-          IDTelDestinatario = "WiAction/ota/rx/" + String(NumSerialESP);
-          MensajeEnviar = "OK_OTA";
-          Serial.println(" ");
-          Serial.println("RESPONDE AL TELEFONO GENERADOR!");
-          mqttClient.publish(String(IDTelDestinatario).c_str(), 0, false, String(MensajeEnviar).c_str());
-
-          Serial.println("palabra confirmacion ok");
-          Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
-          Serial.println("***********************");
-          delay(3000);
-          ESP.restart();
-        } else {
-          Serial.printf("❌ Error al aplicar la actualización. Código de error: %d\n", Update.getError());
-        }
-      } else {
-        Serial.printf("❌ Error al descargar el firmware: %d/%d bytes escritos\n", written, contentLength);
-      }
-    } else {
-      Serial.printf("❌ No hay suficiente espacio para la actualización. Código de error: %d\n", Update.getError());
-    }
-  } else {
-    Serial.printf("❌ Error al descargar el firmware: %d\n", httpCode);
-  }
-  DatoRecibido = "";
-  http.end();
-}
 
 //_______________________________
 String leerVersionDesdeEEPROM() {
@@ -3570,64 +3480,10 @@ void LeeReloj() {
   timeClient.update();
 
   time_t epochTime = timeClient.getEpochTime();
- // Serial.print("Epoch Time: ");
- //Serial.println(epochTime);
+  // Serial.print("Epoch Time: ");
+  //Serial.println(epochTime);
 
   String formattedTime = timeClient.getFormattedTime();
- //Serial.print("Formatted Time: ");
- //Serial.println(formattedTime);
-
-  int currentHour = timeClient.getHours();
- //Serial.print("Hour: ");
- //Serial.println(currentHour);
-
-  int currentMinute = timeClient.getMinutes();
- //Serial.print("Minutes: ");
- //Serial.println(currentMinute);
-
-  int currentSecond = timeClient.getSeconds();
- //Serial.print("Seconds: ");
- //Serial.println(currentSecond);
-
-  String weekDay = weekDays[timeClient.getDay()];
- //Serial.print("Week Day: ");
-  // Serial.println(weekDay);
-
-  //Get a time structure
-  struct tm *ptm = gmtime ((time_t *)&epochTime);
-
-  int monthDay = ptm->tm_mday;
- //Serial.print("Month day: ");
- //Serial.println(monthDay);
-
-  int currentMonth = ptm->tm_mon + 1;
-//  Serial.print("Month: ");
- // Serial.println(currentMonth);
-
-  String currentMonthName = months[currentMonth - 1];
-// Serial.print("Month name: ");
-// Serial.println(currentMonthName);
-
-  int currentYear = ptm->tm_year + 1900;
-// Serial.print("Year: ");
-// Serial.println(currentYear);
-
-  //Print complete date:
-  String currentDate =  String(monthDay) + "/" + String(currentMonth) + "/" + String(currentYear);
- Serial.print(currentDate);
-  HoraNotificacion = formattedTime + "-" + currentDate;
-  Serial.println(HoraNotificacion);
-}
-
-/*
-  timeClient.update();
-
-  /time_t epochTime = timeClient.getEpochTime();
-  Serial.print("Epoch Time: ");
-  Serial.println(epochTime);
-  Serial.println("&&&&&&&&&");
-
-  formattedTime = timeClient.getFormattedTime();
   //Serial.print("Formatted Time: ");
   //Serial.println(formattedTime);
 
@@ -3640,11 +3496,11 @@ void LeeReloj() {
   //Serial.println(currentMinute);
 
   int currentSecond = timeClient.getSeconds();
-  // Serial.print("Seconds: ");
-  // Serial.println(currentSecond);
+  //Serial.print("Seconds: ");
+  //Serial.println(currentSecond);
 
-  //String weekDay = weekDays[timeClient.getDay()];
-  // Serial.print("Week Day: ");
+  String weekDay = weekDays[timeClient.getDay()];
+  //Serial.print("Week Day: ");
   // Serial.println(weekDay);
 
   //Get a time structure
@@ -3655,29 +3511,29 @@ void LeeReloj() {
   //Serial.println(monthDay);
 
   int currentMonth = ptm->tm_mon + 1;
-  Serial.print("Month: ");
-  Serial.println(currentMonth);
+  //  Serial.print("Month: ");
+  // Serial.println(currentMonth);
 
-  // String currentMonthName = months[currentMonth - 1];
-  //Serial.print("Month name: ");
-  //Serial.println(currentMonthName);
+  String currentMonthName = months[currentMonth - 1];
+  // Serial.print("Month name: ");
+  // Serial.println(currentMonthName);
 
   int currentYear = ptm->tm_year + 1900;
-  Serial.print("Year: ");
-  Serial.println(currentYear);
+  // Serial.print("Year: ");
+  // Serial.println(currentYear);
 
   //Print complete date:
   String currentDate =  String(monthDay) + "/" + String(currentMonth) + "/" + String(currentYear);
-  //Serial.print("Current date: ");
-  Serial.println(currentDate);
-
-  HoraNotificacion = formattedTime;
+  Serial.print(currentDate);
+  HoraNotificacion = formattedTime + "-" + currentDate;
   Serial.println(HoraNotificacion);
-  Serial.println("");
-  }
-*/
+}
+
 
 void printWiFiState() {
+  if (EnProcesoOTA == false) {
+    return;
+  }
   static boolean printed = false;
   if (WiFi.status() == WL_CONNECTED) {
     if (printed)
@@ -3693,5 +3549,144 @@ void printWiFiState() {
       return;
     Serial.println("WiFi disconnected!\n");
     printed = false;
+  }
+}
+
+/*
+  void actualizarFirmwareSegura(String url) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ No hay conexión WiFi. OTA cancelada.");
+    IDTelDestinatario = "WiAction/ota/rx/" + String(NumSerialESP);
+    MensajeEnviar = "FALTA_WIFI";
+    mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+    return;
+  }
+
+  Serial.println("📥 Iniciando OTA desde: " + url);
+  IDTelDestinatario = "WiAction/ota/rx/" + String(NumSerialESP);
+  MensajeEnviar = "INICIA_OTA";
+  mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  t_httpUpdate_return resultado = ESPhttpUpdate.update(client, url);
+
+  switch (resultado) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("❌ OTA falló. Código: %d, %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+      MensajeEnviar = "FALLO_OTA_" + String(ESPhttpUpdate.getLastError());
+      mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("ℹ️ No hay actualizaciones.");
+      MensajeEnviar = "SIN_ACTUALIZACION";
+      mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+      break;
+
+    case HTTP_UPDATE_OK:
+      Serial.println("✅ OTA completada exitosamente. Reiniciando...");
+
+      ArmaVersionFechaOTA(); // tu función interna
+
+      MensajeEnviar = "OK_OTA";
+      mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+      Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+      delay(2000);
+          ESP.restart();
+      break;
+  }
+  }
+*/
+
+void actualizarFirmware(String url) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ No hay conexión WiFi. OTA cancelada.");
+    return;
+  }
+
+  Serial.println("📥 Iniciando OTA desde: " + url);
+  ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+
+  WiFiClientSecure client;
+  client.setInsecure();  // ⚠️ Permite conexiones HTTPS sin validar el certificado
+  HTTPClient http;
+  if (http.begin(client, url)) { // Inicia conexión HTTPS
+    Serial.println("🔍 Conexión HTTPS establecida con éxito.");
+
+    int httpCode = http.GET();
+    Serial.printf("🔍 Código de respuesta HTTP: %d\n", httpCode);
+
+    if (httpCode == HTTP_CODE_OK) {
+      int contentLength = http.getSize();
+      Serial.printf("📏 Tama//o del archivo: %d bytes\n", contentLength);
+
+      if (Update.begin(contentLength)) {
+        Serial.println("📤 Espacio adecuado para iniciar actualización.");
+
+        WiFiClient* stream = http.getStreamPtr();
+        size_t totalWritten = 0;
+        size_t written;
+        Serial.println("📡 Descargando el firmware...");
+
+
+        //
+        //  HTTPClient http;
+        //  if (http.begin(client, url)) {  // Comienza la conexión HTTPS
+        //    int httpCode = http.GET();   // Realiza la solicitud GET
+        //
+        //    if (httpCode == HTTP_CODE_OK) {  // Comprueba si la respuesta es exitosa
+        //      int contentLength = http.getSize();
+        //      Serial.printf("🔍 Tama//o del firmware: %d bytes\n", contentLength);
+        //
+        //      if (Update.begin(contentLength)) {  // Inicia la actualización
+        //        WiFiClient* stream = http.getStreamPtr();
+        //        size_t written = Update.writeStream(*stream);
+
+        if (written == contentLength) {
+          if (Update.end()) {
+            Serial.println("✅ OTA completada. Reiniciando...");
+            ArmaVersionFechaOTA(); // tu función interna
+            MensajeEnviar = "OK_OTA";
+            mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+            Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+            delay(2000);
+            ESP.restart();
+
+          } else {
+            Serial.printf("❌ Error aplicando la actualización: %d\n", Update.getError());
+            MensajeEnviar = "ERR_APLICA_OTA";
+            mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+            Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+          }
+        } else {
+          Serial.printf("❌ Error escribiendo la actualización: %d/%d bytes\n", written, contentLength);
+          MensajeEnviar = "MAL_WR_OTA";
+          mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+          Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+        }
+
+      } else {
+        Serial.printf("❌ No hay suficiente espacio: %d\n", Update.getError());
+        MensajeEnviar = "NO_HAY_SPACE_OTA";
+        mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+        Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+      }
+    } else {
+      Serial.printf("❌ Error al descargar el firmware: %d\n", httpCode);
+      MensajeEnviar = "ERR_DESCARGA_OTA";
+      mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+      Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
+    }
+
+    DatoRecibido = "";
+
+    http.end();
+  } else {
+    Serial.println("❌ Falló la conexión HTTPS.");
+    MensajeEnviar = "ERR_COMUNIC_OTA";
+    mqttClient.publish(IDTelDestinatario.c_str(), 0, false, MensajeEnviar.c_str());
+    Serial.println("📢 Confirmación enviada a: " + IDTelDestinatario);
   }
 }
